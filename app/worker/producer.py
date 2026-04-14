@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from kafka import KafkaProducer
+from kafka.producer import KafkaProducer
 
 from app.message.message import ResultMessage
 

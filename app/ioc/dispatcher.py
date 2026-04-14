@@ -11,7 +11,7 @@ def build_default_dispatcher(config: AppConfig) -> StageDispatcher:
     llm_model = LLMModel(config)
     return StageDispatcher(
         {
-            1: KnowledgeSegmentStage(asr_model, llm_model),
-            2: QuizStage(llm_model)
+            "knowledge": KnowledgeSegmentStage(asr_model, llm_model),
+            "quiz": QuizStage(llm_model)
         }
     )

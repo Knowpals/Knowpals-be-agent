@@ -24,7 +24,7 @@ class QuizStage(StageHandler):
             if q:
                 q["question_id"] = f"q_{seg['segment_id']}_{len(quizzes) + 1}"
                 q["segment_id"] = seg["segment_id"]
-                q["concept_id"] = concept["concept_id"]
+                q["concept_ids"] = [concept["concept_id"]]
 
                 quizzes.append(q)
 
@@ -63,7 +63,7 @@ class QuizStage(StageHandler):
                 5. 题目必须考察理解，而不是复述
                 6. 难度：easy / medium / hard
                 7. 如果此分段的知识点包含“总结”,出的题请包括这个视频中的全部知识点
-                8. 需要输出此题所考察的知识点id
+                8. 需要输出此题所考察的知识点id(用数组的形式输出）
                 ---
                 【输出格式】
                 返回JSON：
@@ -75,7 +75,7 @@ class QuizStage(StageHandler):
                   "answer": "",
                   "analysis": "",
                   "difficulty": "easy|medium|hard",
-                  "concept_id": "c1"
+                  "concept_ids": ["c1"]
                 }
                 
                 ---

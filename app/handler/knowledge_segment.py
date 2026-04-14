@@ -5,6 +5,8 @@ from app.handler.handler import StageHandler
 from app.model.asr import ASRModel
 from app.model.llm import LLMModel
 
+import hashlib
+
 
 class KnowledgeSegmentStage(StageHandler):
     def __init__(self,asr_model:ASRModel,llm_model:LLMModel):
@@ -26,7 +28,11 @@ class KnowledgeSegmentStage(StageHandler):
         concepts_raw=self.extract_concepts(sentences)
         #构建concepts + segments
         concepts, segments = self.build_output(sentences, concepts_raw)
-
+        print({
+            "concepts": concepts,
+            "segments": segments,
+            "duration_ms": asr_result["duration_ms"]
+        })
         return{
             "concepts": concepts,
             "segments": segments,
@@ -98,8 +104,9 @@ class KnowledgeSegmentStage(StageHandler):
             if not indices:
                 continue
 
-            concept_id = f"c{i + 1}"
-            segment_id = f"seg_{i + 1}"
+            concept_id = gen_id("knowledge",c.get("title"))
+            segment_text = "".join(sentences[idx]["text"] for idx in indices)
+            segment_id = gen_id("seg", segment_text)
 
             concepts.append({
                 "concept_id": concept_id,
@@ -116,3 +123,8 @@ class KnowledgeSegmentStage(StageHandler):
             })
 
         return concepts, segments
+
+
+def gen_id(prefix:str,content:str) -> str:
+    md5=hashlib.md5(content.encode("utf-8")).hexdigest()
+    return f"{prefix}_{md5}"

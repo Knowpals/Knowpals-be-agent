@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from kafka import KafkaConsumer
+from kafka.consumer import KafkaConsumer
 
 from app.cache.cache import EventCache
 from app.dispatch.dispatcher import StageDispatcher
@@ -25,6 +25,7 @@ class PipelineWorker:
 
     def run(self) -> None:
         for msg in self.consumer_client:
+            print("接收到msg：",msg)
             task = TaskMessage(msg.value)
 
             if self.event_cache.is_done(task.job_id, task.stage):
@@ -40,6 +41,7 @@ class PipelineWorker:
                         result=result,
                     )
                 )
+                print("发送消息：",result)
                 self.event_cache.mark_done(task.job_id, task.stage)
             except Exception as e:
                 self.result_publisher.send(

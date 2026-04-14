@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 
-from kafka import KafkaConsumer, KafkaProducer
+from kafka.consumer import KafkaConsumer
+from kafka.producer import KafkaProducer
 
 from app.config.loader import AppConfig
 

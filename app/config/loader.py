@@ -11,7 +11,7 @@ _DEFAULT_CONFIG = _CONFIG_DIR / "config.yaml"
 
 @dataclass
 class KafkaConfig:
-    bootstrap_servers: str
+    bootstrap_servers: list[str]
     task_topic: str
     result_topic: str
     group_id: str

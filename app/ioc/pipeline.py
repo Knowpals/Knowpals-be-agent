@@ -11,7 +11,7 @@ from app.config.loader import AppConfig
 from app.dispatch.dispatcher import StageDispatcher
 from app.ioc.dispatcher import build_default_dispatcher
 
-from app.ioc.kafka import new_consumer, new_producer
+from app.ioc.kafka_clients import new_consumer, new_producer
 from app.ioc.redis import new_redis_client
 from app.worker.consumer import PipelineWorker
 from app.worker.producer import ResultPublisher
