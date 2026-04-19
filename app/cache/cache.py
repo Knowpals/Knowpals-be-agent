@@ -9,4 +9,4 @@ class EventCache:
         return self.client.exists(f"job:{job_id}:{stage}") == 1
 
     def mark_done(self,job_id, stage):
-        self.client.set(f"job:{job_id}:{stage}", 1, ex=86400)
+        self.client.set(f"job:{job_id}:{stage}", 1, ex=300)

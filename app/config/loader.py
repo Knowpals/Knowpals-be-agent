@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 _CONFIG_DIR = Path(__file__).resolve().parent
-_DEFAULT_CONFIG = _CONFIG_DIR / "config.yaml"
+_DEFAULT_CONFIG = _CONFIG_DIR / "./config/config.yaml"
 
 
 @dataclass
@@ -45,8 +46,16 @@ class AppConfig:
     openai: OpenaiConfig
 
 
-def load_config(config_path: str | Path | None = None) -> AppConfig:
-    path = Path(config_path) if config_path is not None else _DEFAULT_CONFIG
+def load_config() -> AppConfig:
+    env_path = os.getenv("CONFIG_PATH")
+
+    if env_path:
+        path = Path(env_path)
+    else:
+        path = _DEFAULT_CONFIG
+
+    if not path.exists():
+        raise FileNotFoundError(f"配置文件不存在: {path}")
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
 

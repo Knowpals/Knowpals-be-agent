@@ -1,6 +1,8 @@
 import json
 from typing import Any
 
+from redis import Redis
+
 from app.handler.handler import StageHandler
 from app.model.asr import ASRModel
 from app.model.llm import LLMModel
@@ -9,9 +11,10 @@ import hashlib
 
 
 class KnowledgeSegmentStage(StageHandler):
-    def __init__(self,asr_model:ASRModel,llm_model:LLMModel):
+    def __init__(self,asr_model:ASRModel,llm_model:LLMModel,r:Redis):
         self.asr_model=asr_model
         self.llm_model=llm_model
+        self.r=r
 
     def run(self, payload: dict[str, Any]) -> Any:
         #asr
@@ -113,6 +116,7 @@ class KnowledgeSegmentStage(StageHandler):
                 "title": c.get("title", ""),
                 "content": c.get("content", ""),
             })
+            self.r.set(f"knowpals:knowledge:{concept_id}",c.get("title", ""))
 
             segments.append({
                 "segment_id": segment_id,

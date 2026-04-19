@@ -15,3 +15,29 @@ class ResultMessage:
             "result": result,
             "error": error
         }
+
+class MemoryEventMessage:
+    def __init__(self,data):
+        self.data={}
+
+Event = {
+    "type": str,              # question | pause | replay | chat
+    "student_id": str,
+    "knowledge_id": str,
+
+    "video_id": str | None,
+    "segment_id": str | None,
+
+    "ts": int,
+
+    # ---- question ----
+    "question_id": str | None,
+    "is_correct": bool | None,
+    "content": str | None,
+    "user_answer": str | None,
+    "right_answer": str | None,
+
+    # ---- chat ----
+    "text": str | None,
+    "intent": str | None,
+}

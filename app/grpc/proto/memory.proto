@@ -1,0 +1,58 @@
+syntax = "proto3";
+
+package memory;
+
+option go_package = "memorypb";
+
+enum EventType {
+    QUESTION = 0;
+    PAUSE = 1;
+    REPLAY = 2;
+    CHAT = 3;
+  }
+
+message Event {
+  string student_id = 1;
+  string knowledge_id = 2;
+
+  string video_id = 3;
+  string segment_id = 4;
+
+  int64 ts = 5;
+
+  EventType event_type = 6;
+
+  oneof detail {
+    QuestionEvent question = 10;
+    ChatEvent chat = 13;
+  }
+}
+
+message QuestionEvent {
+  string question_id = 1;
+  bool is_correct = 2;
+
+  string content = 3;        // 错题才有
+  string user_answer = 4;
+  string right_answer = 5;
+
+}
+
+message ChatEvent {
+  string text = 1;
+  string intent = 2;
+}
+
+// 写入短期记忆
+message WriteRequest {
+  Event event = 1;
+}
+
+message WriteResponse {
+  bool success = 1;
+}
+
+// Go 侧仅调用 Write 写入短期记忆；长期记忆由 Python 内部逻辑触发。
+service MemoryService {
+  rpc Write(WriteRequest) returns (WriteResponse);
+}
