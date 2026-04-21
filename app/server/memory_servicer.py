@@ -76,6 +76,9 @@ class MemoryGrpcServicer(memory_pb2_grpc.MemoryServiceServicer):
         server.add_insecure_port(listen)
         return server
 
+    def register(self, server: grpc.Server) -> None:
+        memory_pb2_grpc.add_MemoryServiceServicer_to_server(self, server)
+
     def start_server(self, cfg: AppConfig) -> grpc.Server:
         """启动 gRPC（非阻塞）：适合与 Kafka worker 同进程运行。"""
         port = cfg.grpc.port

@@ -11,6 +11,7 @@ from app.model.asr import ASRModel
 from app.model.embedding import EmbeddingModel
 from app.rag.chunker import TextChunker
 from app.rag.rag import RagService
+from app.server.register import GrpcServer
 from app.worker.producer import ResultPublisher
 
 _ROOT = Path(__file__).resolve().parent.parent
@@ -23,6 +24,8 @@ from app.ioc.redis import new_redis_client
 from app.memory.memory import MemoryTool
 from app.model.llm import LLMModel
 from app.server.memory_servicer import MemoryGrpcServicer
+from app.server.agent_servicer import AgentGrpcServicer
+from app.agent.orchestrator import LearningAgent
 
 
 def main() -> None:
@@ -43,7 +46,17 @@ def main() -> None:
     dispatcher=build_default_dispatcher(asr_model,llm_model,redis_client,rag)
     memory_tool = MemoryTool(redis_client, llm_model)
 
-    MemoryGrpcServicer(memory_tool).start_server(cfg)
+    # start one grpc server for all services
+    server = GrpcServer(cfg)
+    memory_grpc_server=MemoryGrpcServicer(memory_tool)
+    memory_grpc_server.register(server.server)
+
+    agent = LearningAgent(memory=memory_tool, rag=rag, llm=llm_model)
+    agent_grpc = AgentGrpcServicer(agent)
+    agent_grpc.register(server.server)
+
+    server.start()
+
     build_pipeline_worker(cache,consumer,publisher,dispatcher).run()
 
 

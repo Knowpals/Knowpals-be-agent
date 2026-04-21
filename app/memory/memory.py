@@ -1,385 +1,102 @@
+from __future__ import annotations
+
 from typing import Any, List
 
 import json
-import threading
-import time
 
 from redis import Redis
 
 from app.model.llm import LLMModel
+from app.memory.chat_store import ChatMemoryStore
+from app.memory.long_term_builder import LongTermMemoryBuilder
+from app.memory.skill_state_store import SkillStateStore
+from app.memory.video_memory_store import VideoConceptMemoryStore
+
 
 class MemoryTool:
+    """
+    Facade that aggregates smaller memory stores:
+    - VideoConceptMemoryStore: events/stats/mastery/get_memory per video+knowledge
+    - ChatMemoryStore: student-global chat turns
+    - SkillStateStore: per-skill state for stateful skills
+    - LongTermMemoryBuilder: LLM-based long-term summary builder
+    """
 
-    def __init__(self, r: Redis,llm:LLMModel):
+    def __init__(self, r: Redis, llm: LLMModel):
         self.r = r
         self.llm = llm
+        self.video = VideoConceptMemoryStore(r)
+        self.chat = ChatMemoryStore(r)
+        self.skill_state = SkillStateStore(r)
+        self.long_term = LongTermMemoryBuilder(r=r, llm=llm, video_store=self.video)
 
-    @staticmethod
-    def _decode_hash(h: dict[Any, Any]) -> dict[str, str]:
-        out: dict[str, str] = {}
-        for k, v in h.items():
-            kk = k.decode("utf-8") if isinstance(k, (bytes, bytearray)) else str(k)
-            vv = v.decode("utf-8") if isinstance(v, (bytes, bytearray)) else str(v)
-            out[kk] = vv
-        return out
-
-    def _base_key(self, student_id: str, knowledge_id: str, video_id: str) -> str:
-        """Redis base key for one concept memory under one video."""
-        if not video_id:
-            raise ValueError("video_id is required for memory storage")
-        return f"mem:{student_id}:v:{video_id}:{knowledge_id}"
-
-    def _mastery_zkey(self, student_id: str, video_id: str) -> str:
-        """按学生+视频维度：member=knowledge_id，score=综合掌握度 [0,1]（答题+暂停+回放），越高越强。"""
-        if not video_id:
-            raise ValueError("video_id is required for mastery zset")
-        return f"mem:{student_id}:v:{video_id}:mastery:z"
-
-    def _composite_mastery_score(self, stat: dict[str, str]) -> float | None:
-        """
-        综合记分：错题(用正确率)、暂停、回放都参与。
-        - 有做题：以正确率为基底，暂停/回放占「总互动」比例越高分越低。
-        - 仅暂停/回放：无答题时用中性基底 0.55，再由行为占比拉低。
-        """
-        total = int(stat.get("total", 0))
-        correct = int(stat.get("correct", 0))
-        pause = int(stat.get("pause", 0))
-        replay = int(stat.get("replay", 0))
-
-        activity = total + pause + replay
-        if activity <= 0:
-            return None
-
-        if total > 0:
-            acc = correct / total
-        else:
-            acc = 0.55
-
-        pause_share = pause / activity
-        replay_share = replay / activity
-
-        # 答题质量为主；暂停、回放占比反映卡顿/反复看，压低掌握度（权重可调）
-        raw = acc * (1.0 - 0.45 * pause_share - 0.35 * replay_share)
-        return max(0.0, min(1.0, raw))
-
-    def _refresh_knowledge_mastery_score(self, student_id: str, knowledge_id: str, video_id: str) -> None:
-        """根据 stats 刷新该 knowledge 在视频排行 ZSET 中的得分。"""
-        stat_key = self._base_key(student_id, knowledge_id, video_id) + ":stats"
-        stat = self._decode_hash(self.r.hgetall(stat_key))
-        zkey = self._mastery_zkey(student_id, video_id)
-
-        mastery = self._composite_mastery_score(stat)
-        if mastery is None:
-            self.r.zrem(zkey, knowledge_id)
-            return
-
-        self.r.zadd(zkey, {knowledge_id: mastery})
+    # ---- video concept memory ----
+    def write(self, student_id: str, behavior: dict[str, Any]) -> None:
+        self.video.write_event(student_id=student_id, behavior=behavior)
+        vid = (behavior.get("video_id") or "").strip() or "unknown"
+        kid = behavior.get("knowledge_id") or "unknown"
+        if self.long_term.should_build(student_id=student_id, video_id=vid, knowledge_id=kid, behavior=behavior):
+            self.long_term.trigger_build(student_id=student_id, video_id=vid, knowledge_id=kid)
 
     def weak_knowledge_ids(self, student_id: str, video_id: str, limit: int = 20) -> list[tuple[str, float]]:
-        """
-        按综合掌握度从低到高返回 (knowledge_id, score)，便于直接挑薄弱知识点。
-        Redis: ZRANGE mem:{sid}:v:{vid}:mastery:z 0 limit-1 WITHSCORES
-        """
-        zkey = self._mastery_zkey(student_id, video_id)
-        lim = max(1, min(int(limit), 500))
-        pairs = self.r.zrange(zkey, 0, lim - 1, withscores=True)
-        out: list[tuple[str, float]] = []
-        for mid, score in pairs:
-            kid = mid.decode("utf-8") if isinstance(mid, (bytes, bytearray)) else str(mid)
-            out.append((kid, float(score)))
-        return out
+        return self.video.weak_knowledge_ids(student_id=student_id, video_id=video_id, limit=limit)
 
     def latest_video_id(self, student_id: str) -> str | None:
-        """
-        推断学生最近学习的视频：扫描该学生所有视频下的 events，
-        取每个 list 的第 0 条（最新）里 ts 最大的那个 video_id。
-        """
-        best_vid: str | None = None
-        best_ts = -1
-        for ekey in self.r.scan_iter(f"mem:{student_id}:v:*:*:events"):
-            k = ekey.decode("utf-8") if isinstance(ekey, (bytes, bytearray)) else str(ekey)
-            item = self.r.lindex(k, 0)
-            if not item:
-                continue
-            s = item.decode("utf-8") if isinstance(item, (bytes, bytearray)) else str(item)
-            try:
-                e = json.loads(s)
-            except json.JSONDecodeError:
-                continue
-            ts = int(e.get("ts", 0) or 0)
-            vid = (e.get("video_id") or "").strip()
-            if vid and ts >= best_ts:
-                best_ts = ts
-                best_vid = vid
-        return best_vid
+        return self.video.latest_video_id(student_id=student_id)
 
-    #写短期记忆
-    def write(self, student_id, behavior: dict[str, Any]):
-        behavior["ts"] = int(time.time())
-        knowledge_id = behavior["knowledge_id"]
-        video_id = (behavior.get("video_id") or "").strip()
-        if not video_id:
-            # 仍然强制按视频维度存；缺失 video_id 时落到 unknown，避免污染全局聚合
-            video_id = "unknown"
+    def get_memory(self, student_id: str, knowledge_id: str, video_id: str) -> dict[str, Any]:
+        mem = self.video.get_memory(student_id=student_id, video_id=video_id, knowledge_id=knowledge_id)
+        # keep existing shape expected by ContextBuilder
+        selected = self._select_events(mem.get("events") or [])
+        mem["short_term"] = self._format_events(selected)
+        mem.pop("events", None)
+        return mem
 
-        base = self._base_key(student_id, knowledge_id, video_id)
+    # ---- chat turns (global) ----
+    def add_chat_turn(self, *, student_id: str, role: str, text: str, video_id: str = "") -> None:
+        self.chat.add_turn(student_id=student_id, role=role, text=text, video_id=video_id)
 
-        #存入短期工作记忆（原始行为）
-        event_key = base + ":events"
-        self.r.lpush(event_key, json.dumps(behavior, ensure_ascii=False))
-        self.r.ltrim(event_key, 0, 200)
-        self.r.expire(event_key, 86400 * 2)
+    def get_chat_turns(self, *, student_id: str, limit: int = 8) -> list[dict[str, Any]]:
+        return self.chat.get_turns(student_id=student_id, limit=limit)
 
-        #存入知识点掌握程度的聚合分数
-        stat_key = base + ":stats"
+    # ---- skill state ----
+    def get_skill_state(self, *, student_id: str, skill_name: str) -> dict[str, Any] | None:
+        return self.skill_state.get(student_id=student_id, skill_name=skill_name)
 
-        t = behavior["type"]
+    def set_skill_state(self, *, student_id: str, skill_name: str, state: dict[str, Any], ttl_seconds: int = 600) -> None:
+        self.skill_state.set(student_id=student_id, skill_name=skill_name, state=state, ttl_seconds=ttl_seconds)
 
-        if t == "question":
-            self.r.hincrby(stat_key, "total", 1)
+    def clear_skill_state(self, *, student_id: str, skill_name: str) -> None:
+        self.skill_state.clear(student_id=student_id, skill_name=skill_name)
 
-            if behavior.get("is_correct"):
-                self.r.hincrby(stat_key, "correct", 1)
-            else:
-                self.r.hincrby(stat_key, "wrong", 1)
-
-        elif t == "pause":
-            self.r.hincrby(stat_key, "pause", 1)
-
-        elif t == "replay":
-            self.r.hincrby(stat_key, "replay", 1)
-
-        self.r.expire(stat_key, 86400 * 7)
-
-        self._refresh_knowledge_mastery_score(student_id, knowledge_id, video_id)
-
-        #判断是否需要触发长期记忆更新（Python 侧异步构建，不阻塞写路径）
-        if self._should_build(student_id, knowledge_id, behavior, video_id=video_id):
-            self._trigger_build(student_id, knowledge_id, video_id=video_id)
-
-    def _trigger_build(self, student_id: str, knowledge_id: str, video_id: str) -> None:
-        """长期记忆异步构建；避免阻塞 gRPC Write。"""
-        def run() -> None:
-            try:
-                self.build_long_term(student_id, knowledge_id, video_id)
-            except Exception as e:
-                print(f"[MemoryTool] build_long_term failed: {e}")
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _should_build(self, student_id, knowledge_id, behavior, video_id: str):
-        base = self._base_key(student_id, knowledge_id, video_id)
-        stat_key = base + ":stats"
-
-        # 1. 读统计（与 write() 写入的 Hash 一致）
-        stat = self._decode_hash(self.r.hgetall(stat_key))
-        wrong = int(stat.get("wrong", 0))
-
-        # 2. 条件1：每错5题触发一次
-        if wrong > 0 and wrong % 5 == 0:
-            return True
-
-        # 3. 条件2：连续错误（关键）
-        if behavior["type"] == "question" and not behavior.get("is_correct"):
-            recent = self.r.lrange(base + ":events", 0, 3)
-            recent = [json.loads(e) for e in recent]
-
-            wrong_cnt = sum(
-                1 for e in recent
-                if e["type"] == "question" and not e.get("is_correct")
-            )
-
-            if wrong_cnt >= 3:
-                return True
-
-        return False
-
-    def build_long_term(self, student_id, knowledge_id, video_id: str) -> str:
-        base = self._base_key(student_id, knowledge_id, video_id)
-
-        event_key = base + ":events"
-
-        raw_events = self.r.lrange(event_key, 0, 20)
-        events = [json.loads(e) for e in raw_events]
-
-        wrong_cnt = sum(1 for e in events if e["type"] == "question" and not e.get("is_correct"))
-        if len(events) < 8 and wrong_cnt < 3:
-            return ""
-
-        #选关键事件
-        selected_events = self._select_events(events)
-
-        stats_str = self._format_stats(student_id, knowledge_id, video_id)
-        events_str = self._format_events(selected_events)
-
-        # 获取当前知识点的内容
-        knowledge_name = self.r.get(f"knowpals:knowledge:{knowledge_id}")
-        if knowledge_name:
-            knowledge_name = knowledge_name.decode("utf-8")
-        else:
-            knowledge_name = "未知知识点"
-
-        # 2. 构造 prompt
-        system="""
-        你是一个专业的教育数据分析专家，
-        擅长根据学生行为判断认知水平和学习问题。
-        你的输出必须稳定、结构化、可用于程序处理。
-        """
-        prompt = f"""
-        你是一个学习分析助手，请根据学生的学习行为分析其知识点掌握情况。
-        
-        知识点：{knowledge_name}
-        
-        【统计信息】
-        {stats_str}
-    
-        【行为记录】
-        {events_str}
-    
-        请你完成以下分析，并严格输出 JSON（不要输出任何额外内容）：
-    
-        1. weakness：学生的主要薄弱点（数组）
-        2. behavior_pattern：学习行为特征（数组）
-        3. trend：学习趋势（improving / declining / stable）
-        4. summary：一句话总结
-    
-        输出格式：
-        {{
-          "weakness": [],
-          "behavior_pattern": [],
-          "trend": "",
-          "summary": ""
-        }}
-        """
-
-        msgs=[
-            {
-                "role":"system",
-                "content":system,
-            },
-            {
-                "role":"user",
-                "content":prompt
-            }
-        ]
-        resp = self.llm.think(msgs)
-        resp=self._safe_parse(resp)
-
-        zkey = self._mastery_zkey(student_id, video_id)
-        mastery_score = self.r.zscore(zkey, knowledge_id)
-        mastery = float(mastery_score) if mastery_score is not None else 0.0
-
-        data = {
-            "knowledge_id": knowledge_id,
-            "video_id": video_id or "",
-            "mastery": mastery,
-            **resp,
-            "updated_at": int(time.time())
-        }
-
-        #将长期记忆回写redis
-        long_key = f"mem:{student_id}:v:{video_id}:long:{knowledge_id}"
-        self.r.set(long_key, json.dumps(data))
-        self.r.expire(long_key, 86400 * 30)
-
-        return json.dumps(data)
-
-    def get_memory(self, student_id, knowledge_id, video_id: str):
-        """按视频维度获取某知识点记忆（不做跨视频聚合）。"""
-        base = self._base_key(student_id, knowledge_id, video_id)
-        zkey = self._mastery_zkey(student_id, video_id)
-        mastery_score = self.r.zscore(zkey, knowledge_id)
-        mastery = float(mastery_score) if mastery_score is not None else 0.0
-
-        long_key = f"mem:{student_id}:v:{video_id}:long:{knowledge_id}"
-        long_term = self.r.get(long_key)
-        long_term = long_term.decode() if long_term else "{}"
-
-        event_key = base + ":events"
-        raw_events = self.r.lrange(event_key, 0, 5)
-        events = [json.loads(e) for e in raw_events]
-        selected = self._select_events(events)
-        short_term = self._format_events(selected)
-        return {"mastery": mastery, "video_id": video_id, "knowledge_id": knowledge_id, "long_term": long_term, "short_term": short_term}
-
-    #选择关键性事件（错题+聊天）
-    def _select_events(self, events):
-        wrong_q = []
-        chats = []
-
-        for e in events:
-            if e["type"] == "question" and not e.get("is_correct"):
-                wrong_q.append(e)
-            elif e["type"] == "chat":
-                chats.append(e)
-
-        #控制token数量
+    # ---- helpers for formatting short-term ----
+    def _select_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        wrong_q = [e for e in events if e.get("type") == "question" and not e.get("is_correct")]
+        chats = [e for e in events if e.get("type") == "chat"]
         selected = wrong_q[:3] + chats[:2]
-
         return selected if selected else events[:5]
 
-
-    def _format_stats(self, student_id, knowledge_id, video_id: str):
-        key = self._base_key(student_id, knowledge_id, video_id) + ":stats"
-        stat = self._decode_hash(self.r.hgetall(key))
-        total = int(stat.get("total", 0))
-        wrong = int(stat.get("wrong", 0))
-        pause = int(stat.get("pause", 0))
-        replay = int(stat.get("replay", 0))
-
-        line = ""
-        if total > 0:
-            line += f"做题{stat['total']}次，错误率{(wrong / total)*100:.0%}；"
-        if pause > 0:
-            line += f"暂停{stat['pause']}次；"
-        if replay > 0:
-            line += f"回放{stat['replay']}次；"
-
-        return line
-
-
-    def _format_events(self,events:List[dict[str,Any]])->str:
+    def _format_events(self, events: List[dict[str, Any]]) -> str:
         lines = []
         pause_count = 0
         replay_count = 0
         for e in events:
-            if e["type"] == "question":
-                if e["is_correct"]:
+            if e.get("type") == "question":
+                if e.get("is_correct"):
                     continue
-                line=f"题目内容：{e['content']}"
-                line+=f"学生错误答案：{e['user_answer']}"
-                line+=f"正确答案：{e['right_answer']}"
+                line = f"题目内容：{e.get('content','')}"
+                line += f" 学生错误答案：{e.get('user_answer','')}"
+                line += f" 正确答案：{e.get('right_answer','')}"
                 lines.append(line)
-            elif e["type"] == "chat":
-                line=f"用户对话内容：{e['text']}"
-                lines.append(line)
-            elif e["type"] == "pause" :
+            elif e.get("type") == "chat":
+                lines.append(f"用户对话内容：{e.get('text','')}")
+            elif e.get("type") == "pause":
                 pause_count += 1
-            elif e["type"] == "replay" :
+            elif e.get("type") == "replay":
                 replay_count += 1
-
         if pause_count > 0:
             lines.append(f"暂停次数：{pause_count}")
         if replay_count > 0:
             lines.append(f"回放次数：{replay_count}")
-
         return "\n".join(lines)
-
-    def _safe_parse(self, text: str):
-        try:
-            text = text.strip()
-
-            # 去掉 ```json 包裹
-            if text.startswith("```"):
-                text = text.strip("```").replace("json", "").strip()
-
-            return json.loads(text)
-        except:
-            return {
-                "mastery": 0.0,
-                "weakness": [],
-                "behavior_pattern": [],
-                "trend": "stable",
-                "summary": "LLM解析失败"
-            }
 

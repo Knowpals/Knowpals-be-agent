@@ -27,6 +27,11 @@ class ContextBuilder:
                 video_id = self.memory.latest_video_id(student_id)
             except Exception:
                 video_id = None
+        chat_turns = []
+        try:
+            chat_turns = self.memory.get_chat_turns(student_id=student_id, limit=4)
+        except Exception:
+            chat_turns = []
 
         # 1) 选择检索的知识点集合（不是只按单一 knowledge）
         knowledge_ids = self._select_knowledge_ids(
@@ -52,6 +57,7 @@ class ContextBuilder:
         context = self._build_prompt(
             user_input,
             mem_items,
+            chat_turns,
             knowledge_docs,
             question_docs,
             segment_docs
@@ -60,6 +66,7 @@ class ContextBuilder:
         return {
             "context": context,
             "memory": mem_items,
+            "chat_turns": chat_turns,
             "knowledge_ids": knowledge_ids,
             "video_id": video_id or "",
             "rag_docs": rag_docs
@@ -150,6 +157,7 @@ class ContextBuilder:
         self,
         user_input,
         mem_items,
+        chat_turns,
         knowledge_docs,
         question_docs,
         segment_docs
@@ -173,9 +181,23 @@ class ContextBuilder:
                 )
             return "\n\n".join(blocks).strip()
 
+        def join_chat(turns: List[Dict[str, Any]]) -> str:
+            if not turns:
+                return ""
+            lines = []
+            for t in turns[-8:]:
+                role = t.get("role", "")
+                text = t.get("text", "")
+                if role and text:
+                    lines.append(f"{role}: {text}")
+            return "\n".join(lines).strip()
+
         prompt = f"""
         你是一个智能学习助手，需要根据学生情况进行个性化教学。
         
+        【对话历史（最近）】
+        {join_chat(chat_turns)}
+
         【学生记忆（多知识点聚合）】
         {join_memory(mem_items)}
         
