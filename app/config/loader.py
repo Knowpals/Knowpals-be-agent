@@ -7,7 +7,7 @@ from pathlib import Path
 import yaml
 
 _CONFIG_DIR = Path(__file__).resolve().parent
-_DEFAULT_CONFIG = _CONFIG_DIR / "./config/config.yaml"
+_DEFAULT_CONFIG = _CONFIG_DIR / "./config.yaml"
 
 
 @dataclass
@@ -31,6 +31,7 @@ class DashscopeConfig:
     base_http_api_url: str
     api_key: str
 
+
 @dataclass
 class OpenaiConfig:
     api_key: str
@@ -38,12 +39,27 @@ class OpenaiConfig:
     model: str
     timeout: int
 
+
+@dataclass
+class MilvusConfig:
+    host: str
+    port: str
+    collection: str
+
+
+@dataclass
+class GrpcConfig:
+    port: int
+
+
 @dataclass
 class AppConfig:
     kafka: KafkaConfig
     redis: RedisConfig
     dashscope: DashscopeConfig
     openai: OpenaiConfig
+    milvus: MilvusConfig
+    grpc: GrpcConfig
 
 
 def load_config() -> AppConfig:
@@ -59,7 +75,14 @@ def load_config() -> AppConfig:
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
-    k, r, d ,o= data["kafka"], data["redis"], data["dashscope"],data["openai"]
+    k, r, d, o, m, g = (
+        data["kafka"],
+        data["redis"],
+        data["dashscope"],
+        data["openai"],
+        data["milvus"],
+        data["grpc"],
+    )
     return AppConfig(
         kafka=KafkaConfig(
             bootstrap_servers=k["bootstrap_servers"],
@@ -70,5 +93,6 @@ def load_config() -> AppConfig:
         redis=RedisConfig(**r),
         dashscope=DashscopeConfig(**d),
         openai=OpenaiConfig(**o),
+        milvus=MilvusConfig(**m),
+        grpc=GrpcConfig(**g),
     )
-

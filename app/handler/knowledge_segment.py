@@ -9,12 +9,15 @@ from app.model.llm import LLMModel
 
 import hashlib
 
+from app.rag.rag import RagService
+
 
 class KnowledgeSegmentStage(StageHandler):
-    def __init__(self,asr_model:ASRModel,llm_model:LLMModel,r:Redis):
+    def __init__(self,asr_model:ASRModel,llm_model:LLMModel,redis:Redis,rag:RagService):
         self.asr_model=asr_model
         self.llm_model=llm_model
-        self.r=r
+        self.redis=redis
+        self.rag=rag
 
     def run(self, payload: dict[str, Any]) -> Any:
         #asr
@@ -31,11 +34,13 @@ class KnowledgeSegmentStage(StageHandler):
         concepts_raw=self.extract_concepts(sentences)
         #构建concepts + segments
         concepts, segments = self.build_output(sentences, concepts_raw)
-        print({
-            "concepts": concepts,
-            "segments": segments,
-            "duration_ms": asr_result["duration_ms"]
-        })
+
+        #存入rag
+        for _,c in enumerate(concepts):
+            self.rag.add_doc("knowledge",c["content"],c["concept_id"])
+        for _,s in enumerate(segments):
+            self.rag.add_doc("segment",s["text"],s["concept_id"])
+
         return{
             "concepts": concepts,
             "segments": segments,
@@ -116,7 +121,7 @@ class KnowledgeSegmentStage(StageHandler):
                 "title": c.get("title", ""),
                 "content": c.get("content", ""),
             })
-            self.r.set(f"knowpals:knowledge:{concept_id}",c.get("title", ""))
+            self.redis.set(f"knowpals:knowledge:{concept_id}",c.get("title", ""))
 
             segments.append({
                 "segment_id": segment_id,

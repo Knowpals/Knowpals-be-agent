@@ -23,12 +23,17 @@ class MemoryTool:
             out[kk] = vv
         return out
 
-    def _base_key(self, student_id, knowledge_id):
-        return f"mem:{student_id}:{knowledge_id}"
+    def _base_key(self, student_id: str, knowledge_id: str, video_id: str) -> str:
+        """Redis base key for one concept memory under one video."""
+        if not video_id:
+            raise ValueError("video_id is required for memory storage")
+        return f"mem:{student_id}:v:{video_id}:{knowledge_id}"
 
-    def _mastery_zkey(self, student_id: str) -> str:
-        """按学生维度：member=knowledge_id，score=综合掌握度 [0,1]（答题+暂停+回放），越高越强。"""
-        return f"mem:{student_id}:mastery:z"
+    def _mastery_zkey(self, student_id: str, video_id: str) -> str:
+        """按学生+视频维度：member=knowledge_id，score=综合掌握度 [0,1]（答题+暂停+回放），越高越强。"""
+        if not video_id:
+            raise ValueError("video_id is required for mastery zset")
+        return f"mem:{student_id}:v:{video_id}:mastery:z"
 
     def _composite_mastery_score(self, stat: dict[str, str]) -> float | None:
         """
@@ -57,11 +62,11 @@ class MemoryTool:
         raw = acc * (1.0 - 0.45 * pause_share - 0.35 * replay_share)
         return max(0.0, min(1.0, raw))
 
-    def _refresh_knowledge_mastery_score(self, student_id: str, knowledge_id: str) -> None:
-        """根据 mem:{sid}:{kid}:stats 刷新该 knowledge 在全局排行 ZSET 中的得分。"""
-        stat_key = self._base_key(student_id, knowledge_id) + ":stats"
+    def _refresh_knowledge_mastery_score(self, student_id: str, knowledge_id: str, video_id: str) -> None:
+        """根据 stats 刷新该 knowledge 在视频排行 ZSET 中的得分。"""
+        stat_key = self._base_key(student_id, knowledge_id, video_id) + ":stats"
         stat = self._decode_hash(self.r.hgetall(stat_key))
-        zkey = self._mastery_zkey(student_id)
+        zkey = self._mastery_zkey(student_id, video_id)
 
         mastery = self._composite_mastery_score(stat)
         if mastery is None:
@@ -69,14 +74,13 @@ class MemoryTool:
             return
 
         self.r.zadd(zkey, {knowledge_id: mastery})
-        self.r.expire(zkey, 86400 * 30)
 
-    def weak_knowledge_ids(self, student_id: str, limit: int = 20) -> list[tuple[str, float]]:
+    def weak_knowledge_ids(self, student_id: str, video_id: str, limit: int = 20) -> list[tuple[str, float]]:
         """
         按综合掌握度从低到高返回 (knowledge_id, score)，便于直接挑薄弱知识点。
-        Redis: ZRANGE mem:{sid}:mastery:z 0 limit-1 WITHSCORES
+        Redis: ZRANGE mem:{sid}:v:{vid}:mastery:z 0 limit-1 WITHSCORES
         """
-        zkey = self._mastery_zkey(student_id)
+        zkey = self._mastery_zkey(student_id, video_id)
         lim = max(1, min(int(limit), 500))
         pairs = self.r.zrange(zkey, 0, lim - 1, withscores=True)
         out: list[tuple[str, float]] = []
@@ -85,16 +89,44 @@ class MemoryTool:
             out.append((kid, float(score)))
         return out
 
+    def latest_video_id(self, student_id: str) -> str | None:
+        """
+        推断学生最近学习的视频：扫描该学生所有视频下的 events，
+        取每个 list 的第 0 条（最新）里 ts 最大的那个 video_id。
+        """
+        best_vid: str | None = None
+        best_ts = -1
+        for ekey in self.r.scan_iter(f"mem:{student_id}:v:*:*:events"):
+            k = ekey.decode("utf-8") if isinstance(ekey, (bytes, bytearray)) else str(ekey)
+            item = self.r.lindex(k, 0)
+            if not item:
+                continue
+            s = item.decode("utf-8") if isinstance(item, (bytes, bytearray)) else str(item)
+            try:
+                e = json.loads(s)
+            except json.JSONDecodeError:
+                continue
+            ts = int(e.get("ts", 0) or 0)
+            vid = (e.get("video_id") or "").strip()
+            if vid and ts >= best_ts:
+                best_ts = ts
+                best_vid = vid
+        return best_vid
+
     #写短期记忆
     def write(self, student_id, behavior: dict[str, Any]):
         behavior["ts"] = int(time.time())
-        knowledge_id=behavior["knowledge_id"]
+        knowledge_id = behavior["knowledge_id"]
+        video_id = (behavior.get("video_id") or "").strip()
+        if not video_id:
+            # 仍然强制按视频维度存；缺失 video_id 时落到 unknown，避免污染全局聚合
+            video_id = "unknown"
 
-        base = self._base_key(student_id, knowledge_id)
+        base = self._base_key(student_id, knowledge_id, video_id)
 
         #存入短期工作记忆（原始行为）
         event_key = base + ":events"
-        self.r.lpush(event_key, json.dumps(behavior))
+        self.r.lpush(event_key, json.dumps(behavior, ensure_ascii=False))
         self.r.ltrim(event_key, 0, 200)
         self.r.expire(event_key, 86400 * 2)
 
@@ -111,7 +143,6 @@ class MemoryTool:
             else:
                 self.r.hincrby(stat_key, "wrong", 1)
 
-
         elif t == "pause":
             self.r.hincrby(stat_key, "pause", 1)
 
@@ -120,24 +151,24 @@ class MemoryTool:
 
         self.r.expire(stat_key, 86400 * 7)
 
-        self._refresh_knowledge_mastery_score(student_id, knowledge_id)
+        self._refresh_knowledge_mastery_score(student_id, knowledge_id, video_id)
 
         #判断是否需要触发长期记忆更新（Python 侧异步构建，不阻塞写路径）
-        if self._should_build(student_id, knowledge_id, behavior):
-            self._trigger_build(student_id, knowledge_id)
+        if self._should_build(student_id, knowledge_id, behavior, video_id=video_id):
+            self._trigger_build(student_id, knowledge_id, video_id=video_id)
 
-    def _trigger_build(self, student_id: str, knowledge_id: str) -> None:
+    def _trigger_build(self, student_id: str, knowledge_id: str, video_id: str) -> None:
         """长期记忆异步构建；避免阻塞 gRPC Write。"""
         def run() -> None:
             try:
-                self.build_long_term(student_id, knowledge_id)
+                self.build_long_term(student_id, knowledge_id, video_id)
             except Exception as e:
                 print(f"[MemoryTool] build_long_term failed: {e}")
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _should_build(self, student_id, knowledge_id, behavior):
-        base = self._base_key(student_id, knowledge_id)
+    def _should_build(self, student_id, knowledge_id, behavior, video_id: str):
+        base = self._base_key(student_id, knowledge_id, video_id)
         stat_key = base + ":stats"
 
         # 1. 读统计（与 write() 写入的 Hash 一致）
@@ -163,8 +194,8 @@ class MemoryTool:
 
         return False
 
-    def build_long_term(self, student_id, knowledge_id)->str:
-        base = self._base_key(student_id, knowledge_id)
+    def build_long_term(self, student_id, knowledge_id, video_id: str) -> str:
+        base = self._base_key(student_id, knowledge_id, video_id)
 
         event_key = base + ":events"
 
@@ -178,7 +209,7 @@ class MemoryTool:
         #选关键事件
         selected_events = self._select_events(events)
 
-        stats_str = self._format_stats(student_id, knowledge_id)
+        stats_str = self._format_stats(student_id, knowledge_id, video_id)
         events_str = self._format_events(selected_events)
 
         # 获取当前知识点的内容
@@ -207,15 +238,13 @@ class MemoryTool:
     
         请你完成以下分析，并严格输出 JSON（不要输出任何额外内容）：
     
-        1. mastery：0-1之间的小数
-        2. weakness：学生的主要薄弱点（数组）
-        3. behavior_pattern：学习行为特征（数组）
-        4. trend：学习趋势（improving / declining / stable）
-        5. summary：一句话总结
+        1. weakness：学生的主要薄弱点（数组）
+        2. behavior_pattern：学习行为特征（数组）
+        3. trend：学习趋势（improving / declining / stable）
+        4. summary：一句话总结
     
         输出格式：
         {{
-          "mastery": 0.0,
           "weakness": [],
           "behavior_pattern": [],
           "trend": "",
@@ -236,44 +265,42 @@ class MemoryTool:
         resp = self.llm.think(msgs)
         resp=self._safe_parse(resp)
 
+        zkey = self._mastery_zkey(student_id, video_id)
+        mastery_score = self.r.zscore(zkey, knowledge_id)
+        mastery = float(mastery_score) if mastery_score is not None else 0.0
+
         data = {
             "knowledge_id": knowledge_id,
+            "video_id": video_id or "",
+            "mastery": mastery,
             **resp,
             "updated_at": int(time.time())
         }
 
         #将长期记忆回写redis
-        long_key = f"mem:{student_id}:long:{knowledge_id}"
+        long_key = f"mem:{student_id}:v:{video_id}:long:{knowledge_id}"
         self.r.set(long_key, json.dumps(data))
         self.r.expire(long_key, 86400 * 30)
 
         return json.dumps(data)
 
-    def get_memory(self, student_id, knowledge_id):
-        base = self._base_key(student_id, knowledge_id)
+    def get_memory(self, student_id, knowledge_id, video_id: str):
+        """按视频维度获取某知识点记忆（不做跨视频聚合）。"""
+        base = self._base_key(student_id, knowledge_id, video_id)
+        zkey = self._mastery_zkey(student_id, video_id)
+        mastery_score = self.r.zscore(zkey, knowledge_id)
+        mastery = float(mastery_score) if mastery_score is not None else 0.0
 
-        #长期记忆
-        long_key = f"mem:{student_id}:long:{knowledge_id}"
+        long_key = f"mem:{student_id}:v:{video_id}:long:{knowledge_id}"
         long_term = self.r.get(long_key)
+        long_term = long_term.decode() if long_term else "{}"
 
-        if long_term:
-            long_term = long_term.decode()
-        else:
-            long_term = "{}"
-
-        #短期记忆（取最近）
         event_key = base + ":events"
         raw_events = self.r.lrange(event_key, 0, 5)
-
         events = [json.loads(e) for e in raw_events]
         selected = self._select_events(events)
-
         short_term = self._format_events(selected)
-
-        return {
-            "long_term": long_term,
-            "short_term": short_term
-        }
+        return {"mastery": mastery, "video_id": video_id, "knowledge_id": knowledge_id, "long_term": long_term, "short_term": short_term}
 
     #选择关键性事件（错题+聊天）
     def _select_events(self, events):
@@ -292,8 +319,8 @@ class MemoryTool:
         return selected if selected else events[:5]
 
 
-    def _format_stats(self, student_id,knowledge_id):
-        key=self._base_key(student_id,knowledge_id)+":stats"
+    def _format_stats(self, student_id, knowledge_id, video_id: str):
+        key = self._base_key(student_id, knowledge_id, video_id) + ":stats"
         stat = self._decode_hash(self.r.hgetall(key))
         total = int(stat.get("total", 0))
         wrong = int(stat.get("wrong", 0))

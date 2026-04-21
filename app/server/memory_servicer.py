@@ -6,8 +6,9 @@ from typing import Any
 
 import grpc
 
-from app.grpc.gen import memory_pb2
-from app.grpc.gen import memory_pb2_grpc
+from app.config.loader import AppConfig
+from app.pb.gen import memory_pb2
+from app.pb.gen import memory_pb2_grpc
 from app.memory.memory import MemoryTool
 
 
@@ -66,20 +67,19 @@ class MemoryGrpcServicer(memory_pb2_grpc.MemoryServiceServicer):
         except Exception as e:
             context.abort(grpc.StatusCode.INTERNAL, str(e))
 
-    def create_server(self) -> grpc.Server:
+    def create_server(self, port: int) -> grpc.Server:
         """创建并注册 MemoryService，尚未 start。"""
         workers = int(os.getenv("GRPC_WORKERS", "16"))
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=workers))
         memory_pb2_grpc.add_MemoryServiceServicer_to_server(self, server)
-        port = int(os.getenv("GRPC_PORT", "50051"))
         listen = f"[::]:{port}"
         server.add_insecure_port(listen)
         return server
 
-    def start_server(self) -> grpc.Server:
+    def start_server(self, cfg: AppConfig) -> grpc.Server:
         """启动 gRPC（非阻塞）：适合与 Kafka worker 同进程运行。"""
-        server = self.create_server()
+        port = cfg.grpc.port
+        server = self.create_server(port)
         server.start()
-        port = int(os.getenv("GRPC_PORT", "50051"))
         print(f"gRPC MemoryService listening on [::]:{port}")
         return server

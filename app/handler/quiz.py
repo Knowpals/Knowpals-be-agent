@@ -3,11 +3,13 @@ from typing import Any
 
 from app.handler.handler import StageHandler
 from app.model.llm import LLMModel
+from app.rag.rag import RagService
 
 
 class QuizStage(StageHandler):
-    def __init__(self,llm_model:LLMModel):
+    def __init__(self,llm_model:LLMModel,rag:RagService):
         self.llm_model=llm_model
+        self.rag=rag
 
     def run(self, payload: dict[str, Any]) -> Any:
         segments = payload["segments"]
@@ -96,7 +98,30 @@ class QuizStage(StageHandler):
 
         result = self.llm_model.think(prompt)
         try:
-            return json.loads(result)
+            q = json.loads(result)
+
+            # 存入 rag：按当前 segment 对应的 concept_id（即 knowledge_id）归档
+            # 注意：这里不强依赖 video_id（你说先由 knowledge_id 定位），但把 segment_id 写进 metadata 便于回溯
+            knowledge_id = concept.get("concept_id") or (q.get("concept_ids") or [None])[0]
+            if knowledge_id:
+                text = json.dumps(
+                    {
+                        "question": q.get("question", ""),
+                        "options": q.get("options", []),
+                        "answer": q.get("answer", ""),
+                        "analysis": q.get("analysis", ""),
+                        "difficulty": q.get("difficulty", ""),
+                    },
+                    ensure_ascii=False,
+                )
+                self.rag.add_doc(
+                    "question",
+                    text,
+                    knowledge_id,
+                    segment_id=segment.get("segment_id", ""),
+                )
+
+            return q
         except Exception as e:
             raise e
 

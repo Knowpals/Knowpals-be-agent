@@ -6,7 +6,6 @@ from app.message.message import ResultMessage
 
 
 class ResultPublisher:
-    """Kafka result sink; receives an already-built producer (injected)."""
 
     def __init__(self, producer_client: KafkaProducer, result_topic: str) -> None:
         self.producer_client = producer_client

@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from app.grpc.gen import memory_pb2 as memory__pb2
+from app.pb.gen import memory_pb2 as memory__pb2
 
 
 class MemoryServiceStub(object):
@@ -14,7 +14,7 @@ class MemoryServiceStub(object):
         """Constructor.
 
         Args:
-            channel: A grpc.Channel.
+            channel: A pb.Channel.
         """
         self.Write = channel.unary_unary(
                 '/memory.MemoryService/Write',
