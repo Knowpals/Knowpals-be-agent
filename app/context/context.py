@@ -16,6 +16,7 @@ class ContextBuilder:
         video_id: Optional[str] = None,
         knowledge_id: Optional[str] = None,
         topk_knowledge: int = 3,
+        need: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         返回结构化上下文
@@ -27,40 +28,58 @@ class ContextBuilder:
                 video_id = self.memory.latest_video_id(student_id)
             except Exception:
                 video_id = None
+        need = need or {}
+        need_chat = bool(need.get("chat", True))
+        need_memory = bool(need.get("memory", False))
+        need_rag = bool(need.get("rag", False))
+        rag_types = need.get("rag_types") or ["knowledge"]
+        if not isinstance(rag_types, list):
+            rag_types = ["knowledge"]
+
         chat_turns = []
-        try:
-            chat_turns = self.memory.get_chat_turns(student_id=student_id, limit=4)
-        except Exception:
-            chat_turns = []
+        if need_chat:
+            try:
+                chat_turns = self.memory.get_chat_turns(student_id=student_id, limit=int(need.get("chat_limit", 4) or 4))
+            except Exception:
+                chat_turns = []
 
-        # 1) 选择检索的知识点集合（不是只按单一 knowledge）
-        knowledge_ids = self._select_knowledge_ids(
-            student_id=student_id,
-            video_id=video_id,
-            knowledge_id=knowledge_id,
-            topk=topk_knowledge,
-        )
+        knowledge_ids: List[str] = []
+        if need_memory or need_rag:
+            knowledge_ids = self._select_knowledge_ids(
+                student_id=student_id,
+                video_id=video_id,
+                knowledge_id=knowledge_id,
+                topk=topk_knowledge,
+            )
+        elif knowledge_id:
+            knowledge_ids = [knowledge_id]
 
-        # 2) 批量拉 memory（按 video 或全局聚合）
+        # 2) 批量拉 memory（按 video）
         mem_items: List[Dict[str, Any]] = []
-        if video_id:
+        if need_memory and video_id:
             for kid in knowledge_ids:
                 mem_items.append(self.memory.get_memory(student_id, kid, video_id))
 
-        # 决策检索策略
-        rag_docs = self._retrieve_multi(query=user_input, knowledge_ids=knowledge_ids, mem_items=mem_items, video_id=video_id)
+        rag_docs = []
+        if need_rag and knowledge_ids and video_id:
+            rag_docs = self._retrieve_multi(query=user_input, knowledge_ids=knowledge_ids, mem_items=mem_items, video_id=video_id)
 
-        # 分类整理
         knowledge_docs, question_docs, segment_docs = self._split_docs(rag_docs)
+        if "knowledge" not in rag_types:
+            knowledge_docs = []
+        if "question" not in rag_types:
+            question_docs = []
+        if "segment" not in rag_types:
+            segment_docs = []
 
         # 拼接 context
         context = self._build_prompt(
             user_input,
-            mem_items,
-            chat_turns,
+            mem_items if need_memory else [],
+            chat_turns if need_chat else [],
             knowledge_docs,
             question_docs,
-            segment_docs
+            segment_docs,
         )
 
         return {
@@ -174,10 +193,30 @@ class ContextBuilder:
                 kid = m.get("knowledge_id", "")
                 vid = m.get("video_id", "")
                 mastery = m.get("mastery", 0.0)
+                ktitle = ""
+                kcontent = ""
+                try:
+                    if kid:
+                        t = self.memory.r.get(f"knowpals:knowledge:{kid}")
+                        c = self.memory.r.get(f"knowpals:knowledge_content:{kid}")
+                        if isinstance(t, (bytes, bytearray)):
+                            ktitle = t.decode("utf-8", errors="ignore")
+                        elif isinstance(t, str):
+                            ktitle = t
+                        if isinstance(c, (bytes, bytearray)):
+                            kcontent = c.decode("utf-8", errors="ignore")
+                        elif isinstance(c, str):
+                            kcontent = c
+                except Exception:
+                    pass
                 lt = m.get("long_term", "{}")
                 st = m.get("short_term", "")
                 blocks.append(
-                    f"知识点:{kid} video:{vid} mastery:{mastery}\n长期:{lt}\n短期:{st}".strip()
+                    (
+                        f"知识点:{kid}（{ktitle}） video:{vid} mastery:{mastery}\n"
+                        f"知识点内容:{kcontent}\n"
+                        f"长期:{lt}\n短期:{st}"
+                    ).strip()
                 )
             return "\n\n".join(blocks).strip()
 

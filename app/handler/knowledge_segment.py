@@ -1,5 +1,5 @@
 import json
-from typing import Any
+from typing import Any, List
 
 from redis import Redis
 
@@ -36,10 +36,33 @@ class KnowledgeSegmentStage(StageHandler):
         concepts, segments = self.build_output(sentences, concepts_raw)
 
         #存入rag
+        video_id = str(payload.get("video_id", "") or "")
+        concepts_meta_map: dict[str, List[dict[str, Any]]] = {}
+        for s in segments:
+            concepts_meta_map.setdefault(s["concept_id"], []).append({
+                "segment_id": s["segment_id"],
+                "start_ms": s["start_ms"],
+                "end_ms": s["end_ms"],
+            })
         for _,c in enumerate(concepts):
-            self.rag.add_doc("knowledge",c["content"],c["concept_id"])
+            self.rag.add_doc(
+                "knowledge",
+                c["content"],
+                c["concept_id"],
+                video_id=video_id,
+                concept_title=c.get("title", ""),
+                segment_spans=concepts_meta_map.get(c["concept_id"], []),
+            )
         for _,s in enumerate(segments):
-            self.rag.add_doc("segment",s["text"],s["concept_id"])
+            self.rag.add_doc(
+                "segment",
+                s["text"],
+                s["concept_id"],
+                video_id=video_id,
+                segment_id=s.get("segment_id", ""),
+                start_ms=s.get("start_ms", 0),
+                end_ms=s.get("end_ms", 0),
+            )
 
         return{
             "concepts": concepts,
@@ -121,7 +144,9 @@ class KnowledgeSegmentStage(StageHandler):
                 "title": c.get("title", ""),
                 "content": c.get("content", ""),
             })
-            self.redis.set(f"knowpals:knowledge:{concept_id}",c.get("title", ""))
+            # Store knowledge meta for context building (avoid "only kid" prompts).
+            self.redis.set(f"knowpals:knowledge:{concept_id}", c.get("title", ""))
+            self.redis.set(f"knowpals:knowledge_content:{concept_id}", c.get("content", ""))
 
             segments.append({
                 "segment_id": segment_id,

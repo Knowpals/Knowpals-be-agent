@@ -51,6 +51,18 @@ class AgentGrpcServicer(agent_pb2_grpc.AgentServiceServicer):
             rep = self.agent.generate_report(student_id=request.student_id, video_id=request.video_id, topk=5)
             items = []
             for it in rep.get("items", []):
+                seg_refs = []
+                for s in (it.get("recommended_segments") or []):
+                    if not isinstance(s, dict):
+                        continue
+                    seg_refs.append(
+                        agent_pb2.SegmentRef(
+                            video_id=str(s.get("video_id", "")),
+                            segment_id=str(s.get("segment_id", "")),
+                            start_ms=int(s.get("start_ms", 0) or 0),
+                            end_ms=int(s.get("end_ms", 0) or 0),
+                        )
+                    )
                 items.append(
                     agent_pb2.ReportItem(
                         knowledge_id=str(it.get("knowledge_id", "")),
@@ -59,7 +71,7 @@ class AgentGrpcServicer(agent_pb2_grpc.AgentServiceServicer):
                         weakness=[str(x) for x in (it.get("weakness") or [])],
                         behavior_pattern=[str(x) for x in (it.get("behavior_pattern") or [])],
                         trend=str(it.get("trend", "")),
-                        recommended_segments=[str(x) for x in (it.get("recommended_segments") or [])],
+                        recommended_segments=seg_refs,
                     )
                 )
             return agent_pb2.GenerateReportResponse(

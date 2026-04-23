@@ -5,6 +5,18 @@ import warnings
 
 from app.pb.gen import agent_pb2 as agent__pb2
 
+GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_VERSION = grpc.__version__
+_version_not_supported = False
+
+try:
+    from grpc._utilities import first_version_is_lower
+    _version_not_supported = first_version_is_lower(GRPC_VERSION, GRPC_GENERATED_VERSION)
+except ImportError:
+    _version_not_supported = True
+
+# NOTE: relax strict grpc version checks for runtime compatibility.
+
 
 class AgentServiceStub(object):
     """Missing associated documentation comment in .proto file."""

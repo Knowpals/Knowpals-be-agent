@@ -9,14 +9,7 @@ from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-_runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    6,
-    31,
-    1,
-    '',
-    'agent.proto'
-)
+# NOTE: relax strict protobuf runtime version checks for runtime compatibility.
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
@@ -24,7 +17,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61gent.proto\x12\x05\x61gent\"W\n\x0b\x43hatRequest\x12\x12\n\nstudent_id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\x12\x10\n\x08video_id\x18\x03 \x01(\t\x12\x14\n\x0cknowledge_id\x18\x04 \x01(\t\"@\n\x0c\x43hatResponse\x12\r\n\x05reply\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontext\x18\x02 \x01(\t\x12\x10\n\x08video_id\x18\x03 \x01(\t\"R\n\x13GenerateQuizRequest\x12\x12\n\nstudent_id\x18\x01 \x01(\t\x12\x10\n\x08video_id\x18\x02 \x01(\t\x12\x15\n\rnum_questions\x18\x03 \x01(\x05\"\x87\x01\n\x08QuizItem\x12\x14\n\x0cknowledge_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x10\n\x08question\x18\x03 \x01(\t\x12\x0f\n\x07options\x18\x04 \x03(\t\x12\x0e\n\x06\x61nswer\x18\x05 \x01(\t\x12\x10\n\x08\x61nalysis\x18\x06 \x01(\t\x12\x12\n\ndifficulty\x18\x07 \x01(\t\"8\n\x14GenerateQuizResponse\x12 \n\x07quizzes\x18\x01 \x03(\x0b\x32\x0f.agent.QuizItem\"=\n\x15GenerateReportRequest\x12\x12\n\nstudent_id\x18\x01 \x01(\t\x12\x10\n\x08video_id\x18\x02 \x01(\t\"\x9d\x01\n\nReportItem\x12\x14\n\x0cknowledge_id\x18\x01 \x01(\t\x12\x0f\n\x07mastery\x18\x02 \x01(\x01\x12\x0f\n\x07summary\x18\x03 \x01(\t\x12\x10\n\x08weakness\x18\x04 \x03(\t\x12\x18\n\x10\x62\x65havior_pattern\x18\x05 \x03(\t\x12\r\n\x05trend\x18\x06 \x01(\t\x12\x1c\n\x14recommended_segments\x18\x07 \x03(\t\"e\n\x16GenerateReportResponse\x12\x10\n\x08video_id\x18\x01 \x01(\t\x12 \n\x05items\x18\x02 \x03(\x0b\x32\x11.agent.ReportItem\x12\x17\n\x0foverall_summary\x18\x03 \x01(\t2\xd7\x01\n\x0c\x41gentService\x12/\n\x04\x43hat\x12\x12.agent.ChatRequest\x1a\x13.agent.ChatResponse\x12G\n\x0cGenerateQuiz\x12\x1a.agent.GenerateQuizRequest\x1a\x1b.agent.GenerateQuizResponse\x12M\n\x0eGenerateReport\x12\x1c.agent.GenerateReportRequest\x1a\x1d.agent.GenerateReportResponseB\tZ\x07\x61gentpbb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0b\x61gent.proto\x12\x05\x61gent\"W\n\x0b\x43hatRequest\x12\x12\n\nstudent_id\x18\x01 \x01(\t\x12\x0c\n\x04text\x18\x02 \x01(\t\x12\x10\n\x08video_id\x18\x03 \x01(\t\x12\x14\n\x0cknowledge_id\x18\x04 \x01(\t\"@\n\x0c\x43hatResponse\x12\r\n\x05reply\x18\x01 \x01(\t\x12\x0f\n\x07\x63ontext\x18\x02 \x01(\t\x12\x10\n\x08video_id\x18\x03 \x01(\t\"R\n\x13GenerateQuizRequest\x12\x12\n\nstudent_id\x18\x01 \x01(\t\x12\x10\n\x08video_id\x18\x02 \x01(\t\x12\x15\n\rnum_questions\x18\x03 \x01(\x05\"\x87\x01\n\x08QuizItem\x12\x14\n\x0cknowledge_id\x18\x01 \x01(\t\x12\x0c\n\x04type\x18\x02 \x01(\t\x12\x10\n\x08question\x18\x03 \x01(\t\x12\x0f\n\x07options\x18\x04 \x03(\t\x12\x0e\n\x06\x61nswer\x18\x05 \x01(\t\x12\x10\n\x08\x61nalysis\x18\x06 \x01(\t\x12\x12\n\ndifficulty\x18\x07 \x01(\t\"8\n\x14GenerateQuizResponse\x12 \n\x07quizzes\x18\x01 \x03(\x0b\x32\x0f.agent.QuizItem\"=\n\x15GenerateReportRequest\x12\x12\n\nstudent_id\x18\x01 \x01(\t\x12\x10\n\x08video_id\x18\x02 \x01(\t\"\xb0\x01\n\nReportItem\x12\x14\n\x0cknowledge_id\x18\x01 \x01(\t\x12\x0f\n\x07mastery\x18\x02 \x01(\x01\x12\x0f\n\x07summary\x18\x03 \x01(\t\x12\x10\n\x08weakness\x18\x04 \x03(\t\x12\x18\n\x10\x62\x65havior_pattern\x18\x05 \x03(\t\x12\r\n\x05trend\x18\x06 \x01(\t\x12/\n\x14recommended_segments\x18\x07 \x03(\x0b\x32\x11.agent.SegmentRef\"T\n\nSegmentRef\x12\x10\n\x08video_id\x18\x01 \x01(\t\x12\x12\n\nsegment_id\x18\x02 \x01(\t\x12\x10\n\x08start_ms\x18\x03 \x01(\x03\x12\x0e\n\x06\x65nd_ms\x18\x04 \x01(\x03\"e\n\x16GenerateReportResponse\x12\x10\n\x08video_id\x18\x01 \x01(\t\x12 \n\x05items\x18\x02 \x03(\x0b\x32\x11.agent.ReportItem\x12\x17\n\x0foverall_summary\x18\x03 \x01(\t2\xd7\x01\n\x0c\x41gentService\x12/\n\x04\x43hat\x12\x12.agent.ChatRequest\x1a\x13.agent.ChatResponse\x12G\n\x0cGenerateQuiz\x12\x1a.agent.GenerateQuizRequest\x1a\x1b.agent.GenerateQuizResponse\x12M\n\x0eGenerateReport\x12\x1c.agent.GenerateReportRequest\x1a\x1d.agent.GenerateReportResponseB\tZ\x07\x61gentpbb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -45,9 +38,11 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_GENERATEREPORTREQUEST']._serialized_start=457
   _globals['_GENERATEREPORTREQUEST']._serialized_end=518
   _globals['_REPORTITEM']._serialized_start=521
-  _globals['_REPORTITEM']._serialized_end=678
-  _globals['_GENERATEREPORTRESPONSE']._serialized_start=680
-  _globals['_GENERATEREPORTRESPONSE']._serialized_end=781
-  _globals['_AGENTSERVICE']._serialized_start=784
-  _globals['_AGENTSERVICE']._serialized_end=999
+  _globals['_REPORTITEM']._serialized_end=697
+  _globals['_SEGMENTREF']._serialized_start=699
+  _globals['_SEGMENTREF']._serialized_end=783
+  _globals['_GENERATEREPORTRESPONSE']._serialized_start=785
+  _globals['_GENERATEREPORTRESPONSE']._serialized_end=886
+  _globals['_AGENTSERVICE']._serialized_start=889
+  _globals['_AGENTSERVICE']._serialized_end=1104
 # @@protoc_insertion_point(module_scope)
