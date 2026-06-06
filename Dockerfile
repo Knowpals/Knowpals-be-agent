@@ -3,10 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 COPY app ./app
 
-WORKDIR /app/app
-
-CMD ["python", "main.py"]
+CMD ["python", "-m", "app.main"]

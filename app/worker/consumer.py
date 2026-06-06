@@ -24,6 +24,7 @@ class PipelineWorker:
         self.dispatcher = dispatcher
 
     def run(self) -> None:
+        print("消费者启动")
         for msg in self.consumer_client:
             print("接收到msg：",msg)
             task = TaskMessage(msg.value)
